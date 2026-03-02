@@ -42,45 +42,34 @@ function App() {
     const test = testCases[key];
     if (!test) return;
 
-    // ── DEBUG: open browser console to see your testCases structure ──────
     console.log('[handleLoadTest] key:', key);
     console.log('[handleLoadTest] full test object:', JSON.stringify(test, null, 2));
 
     /*
      * Supports all common testCases.js layouts:
      *
-     * Layout A (nested patient):
-     *   { name, category, patient: { id, birthDate, immunization, ... } }
-     *
-     * Layout B (flat — fields on root):
-     *   { name, category, id, birthDate, immunization, ... }
-     *
-     * Layout C (patientData):
-     *   { name, category, patientData: { id, birthDate, ... } }
-     *
-     * Layout D (request):
-     *   { name, category, request: { id, birthDate, ... } }
+     * Layout A (nested patient):  { name, category, patient: { id, birthDate, immunization, ... } }
+     * Layout B (flat):            { name, category, id, birthDate, immunization, ... }
+     * Layout C (patientData):     { name, category, patientData: { id, birthDate, ... } }
+     * Layout D (data/params):     { name, category, data: { id, ... }, params: { state, schoolYear } }
      */
     const patientObj =
-      test.patient     ||  // Layout A  ← most common
-      test.patientData ||  // Layout C
-      test.request     ||  // Layout D
-      test;                // Layout B  ← flat fallback
+      test.patient     ||   // Layout A ← preferred new format
+      test.patientData ||   // Layout C
+      test.data        ||   // Layout D
+      test;                 // Layout B ← flat fallback
 
-    // id — required by @NotBlank on backend
     const id =
-      patientObj.id       ||
+      patientObj.id        ||
       patientObj.patientId ||
-      key;                   // absolute last resort: use the test key
+      key;
 
-    // birthDate
     const birthDate =
       patientObj.birthDate   ||
       patientObj.dob         ||
       patientObj.dateOfBirth ||
       '';
 
-    // immunizations — accept array or already-stringified JSON
     const rawImmunizations =
       patientObj.immunization  ||
       patientObj.immunizations ||
@@ -92,7 +81,6 @@ function App() {
         ? rawImmunizations
         : JSON.stringify(rawImmunizations, null, 2);
 
-    // exceptions — optional
     const rawExceptions =
       patientObj.exceptions ||
       patientObj.exemptions ||
@@ -104,9 +92,9 @@ function App() {
           : JSON.stringify(rawExceptions, null, 2))
       : '';
 
-    // state / schoolYear can live on root OR inside patient object
-    const state      = test.state      || patientObj.state      || 'MA';
-    const schoolYear = test.schoolYear || patientObj.schoolYear || 'preschool';
+    // FIX: check test.state first (new flat layout), then params, then patientObj
+    const state      = test.state      || test.params?.state      || patientObj.state      || 'MA';
+    const schoolYear = test.schoolYear || test.params?.schoolYear || patientObj.schoolYear || 'preschool';
 
     console.log('[handleLoadTest] → id:', id);
     console.log('[handleLoadTest] → birthDate:', birthDate);
@@ -119,14 +107,20 @@ function App() {
   };
 
   // ── Load batch scenario ─────────────────────────────────────────────────
+  // FIX: supports both flat structure { state, schoolYear, patients }
+  //      and old nested structure     { data: { state, schoolYear, patients } }
   const handleLoadBatchScenario = (key) => {
     const scenario = batchScenarios[key];
     if (!scenario) return;
 
-    const patients = scenario.patients || scenario.data || [];
+    // New flat format has patients directly on scenario
+    // Old nested format has everything inside scenario.data
+    const scenarioData = scenario.patients ? scenario : (scenario.data || scenario);
+    const patients = scenarioData.patients || [];
+
     setBatchData({
-      state:      scenario.state      || 'MA',
-      schoolYear: scenario.schoolYear || 'preschool',
+      state:      scenarioData.state      || 'MA',
+      schoolYear: scenarioData.schoolYear || 'preschool',
       patients:   JSON.stringify(patients, null, 2),
     });
     setResult(null);
@@ -140,7 +134,6 @@ function App() {
     setResult(null);
     setApiError(null);
 
-    // Front-end guard — catch empty id before hitting backend
     if (!singleData.id || !singleData.id.trim()) {
       setApiError('Patient ID is required — please enter an ID or load a test case.');
       setLoading(false);
@@ -188,6 +181,7 @@ function App() {
   };
 
   // ── Batch Validate ──────────────────────────────────────────────────────
+  // FIX: added responseMode: 'detailed' — backend @NotBlank requires this field
   const handleBatchValidate = async () => {
     setLoading(true);
     setResult(null);
@@ -196,8 +190,9 @@ function App() {
     try {
       const patients = JSON.parse(batchData.patients);
       const response = await validationService.validateBatch({
-        state:      batchData.state,
-        schoolYear: batchData.schoolYear,
+        state:        batchData.state,
+        schoolYear:   batchData.schoolYear,
+        responseMode: 'detailed',
         patients,
       });
 
